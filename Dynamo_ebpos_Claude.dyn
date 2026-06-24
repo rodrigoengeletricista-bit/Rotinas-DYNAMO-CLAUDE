@@ -2,7 +2,7 @@
   "Uuid": "ff48ff7b-1294-431a-a8cd-bdc5642212b9",
   "IsCustomNode": false,
   "Description": "",
-  "Name": "Dynamo_ebpos_Cloude",
+  "Name": "Dynamo_ebpos_Claude",
   "ElementResolver": {
     "ResolutionMap": {}
   },
