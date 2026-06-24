@@ -1,0 +1,7 @@
+# Revit backup files
+*.?????.rvt
+*.bak
+
+# OS
+Thumbs.db
+Desktop.ini

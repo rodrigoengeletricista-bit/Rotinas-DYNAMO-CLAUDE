@@ -1,0 +1,381 @@
+{
+  "Uuid": "d87d6db9-a6f7-498c-b225-d72e497108c8",
+  "IsCustomNode": false,
+  "Description": "",
+  "Name": "MEGA Rotina_EDF_EBPOS",
+  "ElementResolver": {
+    "ResolutionMap": {}
+  },
+  "Inputs": [],
+  "Outputs": [],
+  "Nodes": [
+    {
+      "ConcreteType": "PythonNodeModels.PythonNode, PythonNodeModels",
+      "Code": "import traceback\r\n\r\ntry:\r\n    import clr\r\n    clr.AddReference('RevitAPI')\r\n    from Autodesk.Revit.DB import *\r\n    from Autodesk.Revit.DB.Structure import StructuralType\r\n\r\n    clr.AddReference('RevitServices')\r\n    import RevitServices\r\n    from RevitServices.Persistence import DocumentManager\r\n    from RevitServices.Transactions import TransactionManager\r\n\r\n    doc = DocumentManager.Instance.CurrentDBDocument\r\n\r\n    # Função antiduplicidade\r\n    def obter_elementos_unicos(dados):\r\n        elementos, ids_vistos = [], set()\r\n        def extrair(item):\r\n            if isinstance(item, list):\r\n                for i in item: extrair(i)\r\n            else:\r\n                elem = UnwrapElement(item)\r\n                if elem and hasattr(elem, \"Id\"):\r\n                    id_val = elem.Id.IntegerValue\r\n                    if id_val not in ids_vistos:\r\n                        ids_vistos.add(id_val)\r\n                        elementos.append(elem)\r\n        extrair(dados)\r\n        return elementos\r\n\r\n    elementos = obter_elementos_unicos(IN[0])\r\n    \r\n    # Mapeamento das 5 famílias\r\n    fam_reto_alta = UnwrapElement(IN[1])\r\n    fam_ed1_alta = UnwrapElement(IN[2])\r\n    fam_redutor = UnwrapElement(IN[3])\r\n    fam_reto_baixa = UnwrapElement(IN[4])\r\n    fam_ed1_baixa = UnwrapElement(IN[5])\r\n    \r\n    NOME_PARAMETRO = \"Comprimento\"\r\n\r\n    TransactionManager.Instance.EnsureInTransaction(doc)\r\n\r\n    # Ativa todas as famílias para evitar erros\r\n    for fam in [fam_reto_alta, fam_ed1_alta, fam_redutor, fam_reto_baixa, fam_ed1_baixa]:\r\n        if fam and not fam.IsActive:\r\n            fam.Activate()\r\n\r\n    sucessos = 0\r\n    relatorio = []\r\n\r\n    for elem in elementos:\r\n        if not hasattr(elem, \"Location\") or not hasattr(elem.Location, \"Curve\"):\r\n            continue\r\n\r\n        # 1. LEITURA INTELIGENTE DO NÍVEL\r\n        try:\r\n            nivel_id = elem.ReferenceLevel.Id if hasattr(elem, \"ReferenceLevel\") else elem.LevelId\r\n            nivel = doc.GetElement(nivel_id)\r\n            nome_nivel = nivel.Name.upper() if nivel else \"DESCONHECIDO\"\r\n        except:\r\n            nome_nivel = \"DESCONHECIDO\"\r\n\r\n        # 2. SEPARADOR DE ALTA E BAIXA CORRENTE\r\n        # A regra verifica se o andar está a jusante do redutor (Acima do 5º Pavimento)\r\n        andares_baixa = [\"6º\", \"7º\", \"8º\", \"9º\", \"ÁTICO\", \"COBERTURA\", \"BARRILETE\", \"RESERVATÓRIO\"]\r\n        is_baixa = any(andar in nome_nivel for andar in andares_baixa)\r\n\r\n        # 3. O FILTRO DAS REGRAS (Cardápio Avançado)\r\n        if \"5º\" in nome_nivel:\r\n            fam_escolhida = fam_redutor\r\n            tipo_nome = \"REDUTOR (1000A -> 800A)\"\r\n            \r\n        elif \"TÉRREO\" in nome_nivel or \"3º\" in nome_nivel or \"7º\" in nome_nivel or \"ÁTICO\" in nome_nivel:\r\n            if is_baixa or \"7º\" in nome_nivel or \"ÁTICO\" in nome_nivel:\r\n                fam_escolhida = fam_ed1_baixa\r\n                tipo_nome = \"DERIVAÇÃO (ED1) - 800A\"\r\n            else:\r\n                fam_escolhida = fam_ed1_alta\r\n                tipo_nome = \"DERIVAÇÃO (ED1) - 1000A\"\r\n                \r\n        else:\r\n            if is_baixa:\r\n                fam_escolhida = fam_reto_baixa\r\n                tipo_nome = \"RETO/FECHAMENTO - 800A\"\r\n            else:\r\n                fam_escolhida = fam_reto_alta\r\n                tipo_nome = \"RETO/FECHAMENTO - 1000A\"\r\n\r\n        # 4. EXTRAÇÃO GEOMÉTRICA\r\n        curva = elem.Location.Curve\r\n        ponto_medio = curva.Evaluate(0.5, True)\r\n        ponto_inicial = curva.GetEndPoint(0)\r\n        ponto_final = curva.GetEndPoint(1)\r\n        tamanho_exato = curva.Length\r\n        \r\n        # 5. INSERÇÃO E ROTAÇÃO\r\n        novo_barramento = doc.Create.NewFamilyInstance(ponto_medio, fam_escolhida, StructuralType.NonStructural)\r\n        doc.Regenerate()\r\n        \r\n        param_tamanho = novo_barramento.LookupParameter(NOME_PARAMETRO)\r\n        if param_tamanho:\r\n            param_tamanho.Set(tamanho_exato)\r\n        \r\n        direcao = (ponto_final - ponto_inicial).Normalize()\r\n        angulo = XYZ.BasisX.AngleOnPlaneTo(direcao, XYZ.BasisZ)\r\n        \r\n        if angulo != 0:\r\n            eixo_z_rot = Line.CreateBound(ponto_medio, ponto_medio + XYZ.BasisZ)\r\n            ElementTransformUtils.RotateElement(doc, novo_barramento.Id, eixo_z_rot, angulo)\r\n        \r\n        # Apaga a eletrocalha nativa\r\n        doc.Delete(elem.Id)\r\n        \r\n        sucessos += 1\r\n        relatorio.append(\"Andar: \" + nome_nivel + \" -> Inserido: \" + tipo_nome)\r\n\r\n    TransactionManager.Instance.TransactionTaskDone()\r\n\r\n    OUT = \"SUCESSO! \" + str(sucessos) + \" peças modeladas e calculadas.\\n\\nRESUMO DA PRUMADA:\\n\" + \"\\n\".join(relatorio)\r\n\r\nexcept Exception as erro:\r\n    OUT = \"ERRO FATAL:\\n\" + traceback.format_exc()",
+      "Engine": "CPython3",
+      "VariableInputPorts": true,
+      "Id": "a7ecebeafc71451c8e3a6ba8dc46c3ed",
+      "NodeType": "PythonScriptNode",
+      "Inputs": [
+        {
+          "Id": "42bbf4172cd547d1952bb8597ea1e424",
+          "Name": "IN[0]",
+          "Description": "Input #0",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "bc43be13b01e4633ac97d09f23418f9a",
+          "Name": "IN[1]",
+          "Description": "Input #1",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "59acad241bea4107bc559f352b262777",
+          "Name": "IN[2]",
+          "Description": "Input #2",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "8cd3328c56a240309e4d1c90c95aa9b9",
+          "Name": "IN[3]",
+          "Description": "Input #3",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "60c36351a34c45228d423cc76aa754d6",
+          "Name": "IN[4]",
+          "Description": "Input #4",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        },
+        {
+          "Id": "07ee111534834fa09f33f41d556a26f7",
+          "Name": "IN[5]",
+          "Description": "Input #5",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Outputs": [
+        {
+          "Id": "5713ce340f48459ea44f59f076bbd924",
+          "Name": "OUT",
+          "Description": "Resultado do script Python",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "Executa um script Python incorporado."
+    },
+    {
+      "ConcreteType": "DSRevitNodesUI.FamilyTypes, DSRevitNodesUI",
+      "SelectedIndex": 140,
+      "SelectedString": "Barramento-Reto:HBC-A-1000A",
+      "Id": "a68c4896633a49df89efc860b581e068",
+      "NodeType": "ExtensionNode",
+      "Inputs": [],
+      "Outputs": [
+        {
+          "Id": "2c5656e1d47242ada20c530113ea3fd4",
+          "Name": "Family Type",
+          "Description": "O Family Type selecionado",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "Todos os tipos de família disponíveis no documento."
+    },
+    {
+      "ConcreteType": "DSRevitNodesUI.FamilyTypes, DSRevitNodesUI",
+      "SelectedIndex": 49,
+      "SelectedString": "Barramento-Derivação-1 Plugue:HBC-A-1000A",
+      "Id": "818abc22db5749be91b36ee7ce9d4b07",
+      "NodeType": "ExtensionNode",
+      "Inputs": [],
+      "Outputs": [
+        {
+          "Id": "edfc59b7bc1b4da2992dfd40e7b19010",
+          "Name": "Family Type",
+          "Description": "O Family Type selecionado",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "Todos os tipos de família disponíveis no documento."
+    },
+    {
+      "ConcreteType": "DSRevitNodesUI.FamilyTypes, DSRevitNodesUI",
+      "SelectedIndex": 126,
+      "SelectedString": "Barramento-Redução-400A-2500A:HBC-A-1000A-0800A",
+      "Id": "70fb5b3bed884bfebf77e68be1a33293",
+      "NodeType": "ExtensionNode",
+      "Inputs": [],
+      "Outputs": [
+        {
+          "Id": "6a585335b50947be8e9fae45a2cdce39",
+          "Name": "Family Type",
+          "Description": "O Family Type selecionado",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "Todos os tipos de família disponíveis no documento."
+    },
+    {
+      "ConcreteType": "DSRevitNodesUI.FamilyTypes, DSRevitNodesUI",
+      "SelectedIndex": 48,
+      "SelectedString": "Barramento-Derivação-1 Plugue:HBC-A-0800A",
+      "Id": "ce490649a7684ebd920d0a53ea2da0e5",
+      "NodeType": "ExtensionNode",
+      "Inputs": [],
+      "Outputs": [
+        {
+          "Id": "676c9e63761a48f695ef384282d311ee",
+          "Name": "Family Type",
+          "Description": "O Family Type selecionado",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "Todos os tipos de família disponíveis no documento."
+    },
+    {
+      "ConcreteType": "DSRevitNodesUI.FamilyTypes, DSRevitNodesUI",
+      "SelectedIndex": 139,
+      "SelectedString": "Barramento-Reto:HBC-A-0800A",
+      "Id": "fc2870bcf2b34869b2d9b24472df6308",
+      "NodeType": "ExtensionNode",
+      "Inputs": [],
+      "Outputs": [
+        {
+          "Id": "1aa665e082ee43df92f36f7105b6d8c8",
+          "Name": "Family Type",
+          "Description": "O Family Type selecionado",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "Todos os tipos de família disponíveis no documento."
+    },
+    {
+      "ConcreteType": "Dynamo.Nodes.DSModelElementsSelection, DSRevitNodesUI",
+      "NodeType": "ExtensionNode",
+      "InstanceId": [
+        "7d33cb63-dd7b-44ad-8471-3beee208ee8d-000e701d"
+      ],
+      "Id": "431ceda260984bdbafbbb9c72512ee85",
+      "Inputs": [],
+      "Outputs": [
+        {
+          "Id": "3dca1c5135ad46698048bdae270be5f5",
+          "Name": "Elements",
+          "Description": "Os elementos selecionados.",
+          "UsingDefaultValue": false,
+          "Level": 2,
+          "UseLevels": false,
+          "KeepListStructure": false
+        }
+      ],
+      "Replication": "Disabled",
+      "Description": "Selecione múltiplas elementos a partir do documento do Revit."
+    }
+  ],
+  "Connectors": [
+    {
+      "Start": "2c5656e1d47242ada20c530113ea3fd4",
+      "End": "bc43be13b01e4633ac97d09f23418f9a",
+      "Id": "2227d9d515304a34998b927c898146e8",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "edfc59b7bc1b4da2992dfd40e7b19010",
+      "End": "59acad241bea4107bc559f352b262777",
+      "Id": "c71c1c49089a4c3e894acd75aca7914d",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "6a585335b50947be8e9fae45a2cdce39",
+      "End": "8cd3328c56a240309e4d1c90c95aa9b9",
+      "Id": "b413582024894e32a867b789d1499e2a",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "676c9e63761a48f695ef384282d311ee",
+      "End": "07ee111534834fa09f33f41d556a26f7",
+      "Id": "b481e5464b0e491291e83364d402bc20",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "1aa665e082ee43df92f36f7105b6d8c8",
+      "End": "60c36351a34c45228d423cc76aa754d6",
+      "Id": "009384cedb7c450f8e0e6842a3e234d4",
+      "IsHidden": "False"
+    },
+    {
+      "Start": "3dca1c5135ad46698048bdae270be5f5",
+      "End": "42bbf4172cd547d1952bb8597ea1e424",
+      "Id": "652ce951df4c46d1925cfe7b88b4bd3c",
+      "IsHidden": "False"
+    }
+  ],
+  "Dependencies": [],
+  "NodeLibraryDependencies": [],
+  "EnableLegacyPolyCurveBehavior": true,
+  "Thumbnail": "",
+  "GraphDocumentationURL": null,
+  "ExtensionWorkspaceData": [
+    {
+      "ExtensionGuid": "28992e1d-abb9-417f-8b1b-05e053bee670",
+      "Name": "Propriedades",
+      "Version": "3.3",
+      "Data": {}
+    },
+    {
+      "ExtensionGuid": "DFBD9CC0-DB40-457A-939E-8C8555555A9D",
+      "Name": "Generative Design",
+      "Version": "8.2",
+      "Data": {}
+    }
+  ],
+  "Author": "",
+  "Linting": {
+    "activeLinter": "Nenhum",
+    "activeLinterId": "7b75fb44-43fd-4631-a878-29f4d5d8399a",
+    "warningCount": 0,
+    "errorCount": 0
+  },
+  "Bindings": [],
+  "View": {
+    "Dynamo": {
+      "ScaleFactor": 1.0,
+      "HasRunWithoutCrash": true,
+      "IsVisibleInDynamoLibrary": true,
+      "Version": "3.3.0.6316",
+      "RunType": "Automatic",
+      "RunPeriod": "1000"
+    },
+    "Camera": {
+      "Name": "_Visualização do plano de fundo",
+      "EyeX": -17.0,
+      "EyeY": 24.0,
+      "EyeZ": 50.0,
+      "LookX": 12.0,
+      "LookY": -13.0,
+      "LookZ": -58.0,
+      "UpX": 0.0,
+      "UpY": 1.0,
+      "UpZ": 0.0
+    },
+    "ConnectorPins": [],
+    "NodeViews": [
+      {
+        "Id": "a7ecebeafc71451c8e3a6ba8dc46c3ed",
+        "Name": "Python Script",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 827.4101766382997,
+        "Y": -297.0078472431178
+      },
+      {
+        "Id": "a68c4896633a49df89efc860b581e068",
+        "Name": "Family Types",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 134.37890067722446,
+        "Y": -534.425124061866
+      },
+      {
+        "Id": "818abc22db5749be91b36ee7ce9d4b07",
+        "Name": "Family Types",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 51.830925870733495,
+        "Y": -394.6462841190288
+      },
+      {
+        "Id": "70fb5b3bed884bfebf77e68be1a33293",
+        "Name": "Family Types",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": -8.804450420277021,
+        "Y": -256.3354990600237
+      },
+      {
+        "Id": "ce490649a7684ebd920d0a53ea2da0e5",
+        "Name": "Family Types",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 71.5370041740448,
+        "Y": 21.453782796259503
+      },
+      {
+        "Id": "fc2870bcf2b34869b2d9b24472df6308",
+        "Name": "Family Types",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 184.57266357686865,
+        "Y": -119.37786782513311
+      },
+      {
+        "Id": "431ceda260984bdbafbbb9c72512ee85",
+        "Name": "Select Model Elements",
+        "IsSetAsInput": false,
+        "IsSetAsOutput": false,
+        "Excluded": false,
+        "ShowGeometry": true,
+        "X": 243.8547304855765,
+        "Y": -682.7649137134787
+      }
+    ],
+    "Annotations": [],
+    "X": 51.92751989627391,
+    "Y": 359.29719917465593,
+    "Zoom": 0.4758876151727638
+  }
+}
