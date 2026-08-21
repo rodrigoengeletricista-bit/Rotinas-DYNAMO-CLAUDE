@@ -6,10 +6,12 @@ de prumadas de barramento blindado usado nas rotinas Dynamo deste repositório.
 
 > Contexto do modelo atual (extraído de `Dynamo_ebpos_Cloude.dyn`):
 > prumada vertical de busway saindo do QGBT no subsolo e subindo até o ático, com peças
-> `Barramento-Reto`, `Barramento-Derivação-1 Plugue` e `Barramento-Redução-1250A-1000A`,
+> as famílias `Barramento-Reto`, `Barramento-Derivação-1 Plugue` e
+> `Barramento-Redução-400A-2500A` (tipos `HBC-A-1000A`, `HBC-A-0800A`, `HBC-A-1000A-0800A`),
 > e níveis nomeados no padrão `(-1)NO-SUBSOLO-ELT`, `00NA-TÉRREO-ELT`,
 > `01NA-2º PAVIMENTO - TIPO-ELT` … `06NA-ÁTICO-ELT`.
-> Todo o roteiro abaixo assume e preserva esse padrão de níveis.
+> Todo o roteiro abaixo assume e preserva esse padrão de níveis. Nomes de família e
+> correntes foram conferidos contra o modelo em `docs/ANALISE_ROTINAS_E_MODELO.md`.
 
 ---
 
@@ -62,10 +64,11 @@ genérica; ajuste conforme a família usada nas rotinas)
 |---|---|---|---|
 | `ELT_Sistema` | Texto | `BUSWAY-PRUMADA`, `BUSWAY-DERIVACAO` | filtro gráfico e tabela |
 | `ELT_Prumada` | Texto | `PR-01` | rastreia trecho ↔ vista |
-| `ELT_Corrente_A` | Inteiro | `1250`, `1000` | filtro por corrente (cor por amperagem) |
+| `ELT_Corrente_A` | Inteiro | `1000`, `800` | tabela e ordenação por amperagem (para filtro gráfico prefira o **Nome do tipo**, que já traz `HBC-A-1000A`) |
 | `ELT_Nivel_Origem` | Texto | `00NA-TÉRREO-ELT` | alimentado pela rotina Dynamo |
 | `ELT_Alimenta_CM` | Texto | `CM_TERREO`, `CM_DUPLEX` | espelha o campo `cm` do `MAPA_NIVEIS` |
 | `ELT_Tipo_Peca` | Texto | `RETO`, `DERIVACAO`, `REDUCAO`, `CURVA`, `FLANGE` | filtro por tipo de peça |
+| `ELT_Guia_Origem` | Texto | `SUBSTITUIDO` | marca a eletrocalha-guia já consumida pela rotina, para apagar depois |
 
 > **Ganho direto:** esses seis parâmetros são exatamente as chaves que a rotina Dynamo já
 > manipula. Se a rotina passar a escrevê-los na inserção, filtros, tabelas de quantitativo
@@ -84,9 +87,10 @@ filtro de seleção quebra quando a rotina recria os elementos.
 |---|---|---|---|
 | `ELT-BUSWAY-Prumada` | Cable Tray / Modelo Genérico / Eq. Elétrico | `ELT_Sistema` = `BUSWAY-PRUMADA` | Linhas vermelhas, peso 5, preenchimento sólido |
 | `ELT-BUSWAY-Derivacao` | idem | `ELT_Sistema` = `BUSWAY-DERIVACAO` | Laranja, peso 4 |
-| `ELT-BUSWAY-1250A` | idem | `ELT_Corrente_A` = `1250` | Vermelho escuro |
-| `ELT-BUSWAY-1000A` | idem | `ELT_Corrente_A` = `1000` | Vermelho claro |
-| `ELT-BUSWAY-Reducao` | idem | `ELT_Tipo_Peca` = `REDUCAO` | Amarelo + hachura, alta visibilidade |
+| `ELT-BUSWAY-1000A` | idem | `Nome do tipo` contém `HBC-A-1000A` | Vermelho escuro — trecho de alta |
+| `ELT-BUSWAY-0800A` | idem | `Nome do tipo` contém `HBC-A-0800A` | Vermelho claro — trecho após a redução |
+| `ELT-BUSWAY-Reducao` | idem | `Família` = `Barramento-Redução-400A-2500A` | Amarelo + hachura, alta visibilidade |
+| `QA-GUIA-Eletrocalha-Residual` | Eletrocalhas e Conexões de eletrocalha | `Comentários` = `SUBSTITUIDO`, ou toda eletrocalha dentro do shaft | **Ciano** — guia não apagada e cotovelos órfãos |
 | `ELT-BUSWAY-SemParametro` | idem | `ELT_Sistema` **não tem valor** | **Magenta puro** — é o filtro de QA |
 
 > `ELT-BUSWAY-SemParametro` é o mais importante do conjunto: qualquer peça inserida pela
@@ -104,7 +108,7 @@ filtro de seleção quebra quando a rotina recria os elementos.
 
 ### 2.3 Convenção de nome de filtro
 
-`<GRUPO>-<ASSUNTO>-<CRITÉRIO>` — ex.: `ELT-BUSWAY-1250A`, `CTX-Arquitetura-Fundo`.
+`<GRUPO>-<ASSUNTO>-<CRITÉRIO>` — ex.: `ELT-BUSWAY-1000A`, `CTX-Arquitetura-Fundo`.
 Grupos: `ELT`, `CTX` (contexto), `QA` (verificação), `PUB` (publicação).
 Assim a lista de filtros fica ordenada por função, não por ordem de criação.
 
@@ -256,7 +260,7 @@ ELT-BUSWAY-CO-<ASSUNTO>-<IDENTIFICADOR>
 | Prumada completa subsolo→ático | `ELT-BUSWAY-CO-PRUMADA-PR01` | Corte de edificação |
 | Corte transversal no shaft | `ELT-BUSWAY-CO-SHAFT-PR01-T01` | Corte de edificação |
 | Derivação no térreo (CM_TERREO) | `ELT-BUSWAY-CO-DERIVACAO-00NA-CM-TERREO` | Corte de detalhe |
-| Redução 1250→1000 A no 5º pav. | `ELT-BUSWAY-CO-REDUCAO-04NA-1250-1000` | Corte de detalhe |
+| Redução 1000→800 A no 5º pav. | `ELT-BUSWAY-CO-REDUCAO-04NA-1000-0800` | Corte de detalhe |
 | Travessia de laje | `ELT-BUSWAY-CO-TRAVESSIA-LAJE-TIPO` | Corte de detalhe |
 
 Use **tipos de corte distintos** (`Gerenciar > Estilos de objeto` / tipo de família de corte):
@@ -283,7 +287,7 @@ Orientação sempre pelo **norte de projeto**: `NORTE`, `SUL`, `LESTE`, `OESTE`.
 ```
 ELT-BUSWAY-DT-<COMPONENTE>-<VARIANTE>
 ```
-Ex.: `ELT-BUSWAY-DT-SUPORTE-MOLA-LAJE`, `ELT-BUSWAY-DT-PLUGUE-DERIVACAO-400A`,
+Ex.: `ELT-BUSWAY-DT-SUPORTE-MOLA-LAJE`, `ELT-BUSWAY-DT-PLUGUE-DERIVACAO-0800A`,
 `ELT-BUSWAY-DT-JUNTA-EXPANSAO`, `ELT-BUSWAY-DT-FLANGE-PASSAGEM-LAJE`.
 
 ### 6.4 Marcas (o texto que aparece no desenho)
@@ -320,6 +324,7 @@ Nome da folha em Título Capitalizado (vai impresso):
 | `TB-BUSWAY-Quantitativo` | `ELT_Tipo_Peca`, `ELT_Corrente_A`, Comprimento, Contagem, agrupado por `ELT_Prumada` | Lista de material |
 | `TB-BUSWAY-Derivacoes` | `ELT_Nivel_Origem`, `ELT_Alimenta_CM`, `ELT_Corrente_A` | Confere contra o `MAPA_NIVEIS` da rotina |
 | `TB-QA-Busway-Sem-Parametro` | filtro: `ELT_Sistema` vazio | Deve ficar **zerada** após rodar o Dynamo |
+| `TB-QA-Guia-Residual` | Eletrocalhas com `Comentários` = `SUBSTITUIDO` | Guias e cotovelos a eliminar após conferência |
 | `TB-VISTAS-Controle` | Nome, `ZZ_Disciplina`, `ZZ_Subdisciplina`, `ZZ_Uso`, Folha | Gestão do próprio template |
 
 > `TB-BUSWAY-Derivacoes` é a contraparte de conferência do dicionário `MAPA_NIVEIS`:
@@ -329,7 +334,7 @@ Nome da folha em Título Capitalizado (vai impresso):
 ### 7.3 Legenda obrigatória
 
 `LG-BUSWAY-SIMBOLOGIA` — replica as cores dos filtros da §2.1 com a descrição de cada uma
-(prumada, derivação, redução, 1250 A, 1000 A). Sem essa legenda os filtros coloridos viram
+(prumada, derivação, redução, 1000 A, 800 A). Sem essa legenda os filtros coloridos viram
 código secreto para quem lê a prancha.
 
 ---
@@ -384,6 +389,12 @@ Para que o template e a automação se sustentem mutuamente:
 3. **Nomes de nível são contrato.** As chaves do `MAPA_NIVEIS` são exatamente os nomes dos
    níveis do Revit. Renomear um nível quebra a rotina silenciosamente — trave a
    nomenclatura de níveis no template e documente isso na folha `ELT-BW-00`.
-4. **Nomes de Family Type são contrato.** `Barramento-Reto`,
-   `Barramento-Derivação-1 Plugue`, `Barramento-Redução-1250A-1000A` precisam existir com
-   grafia idêntica no template. Deixe as três famílias **pré-carregadas** no `.rte`.
+4. **Nomes de família e de tipo são contrato.** `Barramento-Reto` (tipos `HBC-A-0400A` a
+   `HBC-A-1600A`), `Barramento-Derivação-1 Plugue` (`HBC-A-0800A`, `HBC-A-1000A`) e
+   `Barramento-Redução-400A-2500A` (`HBC-A-1000A-0800A`) precisam existir com grafia
+   idêntica no template — deixe as três **pré-carregadas** no `.rte`. Prefira resolver o
+   tipo por nome dentro do Python a usar o nó `Family Types`, que guarda índice e troca de
+   peça em silêncio quando a lista de tipos muda.
+5. **A prumada é vertical — confira a orientação.** A rotina atual só orienta trechos
+   horizontais. A vista `ELT-BUSWAY-EL-SHAFT-PR01-NORTE` é onde uma peça inserida deitada
+   aparece de imediato: use-a como conferência obrigatória após cada execução.

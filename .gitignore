@@ -5,3 +5,10 @@
 # OS
 Thumbs.db
 Desktop.ini
+
+# Revit / Dynamo
+*.rvt
+*.rte
+*.rfa
+*.rft
+*.dyf.bak
